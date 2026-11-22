@@ -153,7 +153,7 @@ function orderNumber(int $id): string {
     return 'OS ' . str_pad((string) $id, 4, '0', STR_PAD_LEFT);
 }
 
-function whatsappUrl(array $order, string $brand): string {
+function quoteWhatsAppText(array $order, string $brand): string {
     $lines = [
         $brand . ' · ' . orderNumber((int) $order['id']),
         'Olá, ' . $order['customer'] . '! Segue o orçamento do seu veículo.',
@@ -168,7 +168,28 @@ function whatsappUrl(array $order, string $brand): string {
     if ($order['due_date']) {
         $lines[] = 'Previsão de entrega: ' . shortDate($order['due_date']);
     }
-    return 'https://wa.me/' . $order['phone'] . '?text=' . rawurlencode(implode("\n", $lines));
+    return implode("\n", $lines);
+}
+
+function whatsappUrl(array $order, string $brand): string {
+    return 'https://wa.me/' . $order['phone'] . '?text=' . rawurlencode(quoteWhatsAppText($order, $brand));
+}
+
+function orderWhatsAppNumber(string $input): string {
+    $phone = preg_replace('/\D/', '', $input);
+    if (strlen($phone) === 10 || strlen($phone) === 11) {
+        $phone = '55' . $phone;
+    }
+    if (!preg_match('/^55\d{10,11}$/D', $phone)) {
+        throw new DomainException('Informe um WhatsApp brasileiro com DDD.');
+    }
+    return $phone;
+}
+
+function insertWorkshopOrder(PDO $db, array $values, int $workshopId): int {
+    $stmt = $db->prepare('INSERT INTO orders (customer, phone, vehicle_type, vehicle, plate, diagnosis, parts, labor, total, mileage, due_date, inspection, workshop_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $stmt->execute([...$values, $workshopId]);
+    return (int) $db->lastInsertId();
 }
 
 $statuses = [
@@ -190,6 +211,11 @@ $inspectionItems = [
 $flash = $_SESSION['flash'] ?? '';
 unset($_SESSION['flash']);
 $errorMessage = '';
+
+if (isset($_GET['wa_webhook'])) {
+    require_once __DIR__ . '/whatsapp.php';
+    receiveWhatsApp($db);
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!hash_equals($_SESSION['csrf'], field('csrf'))) {
@@ -242,6 +268,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             session_regenerate_id(true);
             redirect();
         }
+        if (in_array($action, ['save_whatsapp', 'test_whatsapp', 'send_quote', 'reset_whatsapp'], true)) {
+            require_once __DIR__ . '/whatsapp.php';
+            handleWhatsAppAction($db, $workshop, $action);
+        }
         if ($action === 'save_cash' && ($_GET['pagina'] ?? null) === 'caixa') {
             require_once __DIR__ . '/caixa.php';
             saveCash($db, (int) $workshop['id']);
@@ -276,13 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($action === 'save_order') {
             $customer = textField('customer', 160);
-            $phone = preg_replace('/\D/', '', textField('phone', 32));
-            if (strlen($phone) === 10 || strlen($phone) === 11) {
-                $phone = '55' . $phone;
-            }
-            if (!preg_match('/^55\d{10,11}$/D', $phone)) {
-                throw new DomainException('Informe um WhatsApp brasileiro com DDD.');
-            }
+            $phone = orderWhatsAppNumber(textField('phone', 32));
             $type = field('vehicle_type');
             if (!in_array($type, ['Carro', 'Moto'], true)) {
                 throw new DomainException('Selecione carro ou moto.');
@@ -313,9 +337,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $_SESSION['flash'] = 'Ordem de serviço atualizada.';
             } else {
-                $stmt = $db->prepare('INSERT INTO orders (customer, phone, vehicle_type, vehicle, plate, diagnosis, parts, labor, total, mileage, due_date, inspection, workshop_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-                $stmt->execute([...$values, $workshop['id']]);
-                $id = (int) $db->lastInsertId();
+                $id = insertWorkshopOrder($db, $values, (int) $workshop['id']);
                 $_SESSION['flash'] = 'Ordem de serviço criada.';
             }
             redirect('?pagina=ordens&ver=' . $id);
@@ -336,14 +358,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 
 $brand = $workshop['name'] ?? 'R Oficina';
-$pages = ['painel' => 'Visão geral', 'ordens' => 'Ordens de serviço', 'clientes' => 'Clientes', 'veiculos' => 'Veículos', 'caixa' => 'Livro de caixa', 'identidade' => 'Identidade visual', 'nova' => 'Nova ordem'];
+$pages = ['painel' => 'Visão geral', 'ordens' => 'Ordens de serviço', 'clientes' => 'Clientes', 'veiculos' => 'Veículos', 'caixa' => 'Livro de caixa', 'whatsapp' => 'WhatsApp', 'identidade' => 'Identidade visual', 'nova' => 'Nova ordem'];
 $page = is_string($_GET['pagina'] ?? null) && isset($pages[$_GET['pagina']]) ? $_GET['pagina'] : 'painel';
 $csrf = '<input type="hidden" name="csrf" value="' . esc($_SESSION['csrf']) . '">';
 $orders = $byId = $clients = $vehicles = [];
 $counts = array_fill_keys(array_keys($statuses), 0);
 $today = (new DateTimeImmutable('today', new DateTimeZone('America/Fortaleza')))->format('Y-m-d');
 $overdue = $activeValue = 0;
-if ($workshop && !in_array($page, ['identidade', 'caixa'], true)) {
+if ($workshop && !in_array($page, ['identidade', 'caixa', 'whatsapp'], true)) {
     $stmt = $db->prepare('SELECT * FROM orders WHERE workshop_id = ? ORDER BY id DESC');
     $stmt->execute([$workshop['id']]);
     $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -473,6 +495,10 @@ label{display:block;font-weight:650;font-size:.87rem;margin-bottom:11px}label sm
 </div>
 <?php if ($overdue): ?><p class="notice warning"><?= $overdue ?> <?= $overdue === 1 ? 'ordem com previsão vencida' : 'ordens com previsão vencida' ?>.</p><?php endif; ?>
 <section class="card"><div class="card-head"><h2>Ordens recentes</h2><a href="?pagina=ordens">Ver todas</a></div><?php showOrders(array_slice($orders, 0, 8), $statuses); ?></section>
+<?php elseif ($page === 'whatsapp'):
+    require_once __DIR__ . '/whatsapp.php';
+    renderWhatsApp($db, $workshop, $csrf);
+?>
 <?php elseif ($page === 'caixa'):
     require_once __DIR__ . '/caixa.php';
     renderCash($db, (int) $workshop['id'], $csrf);
@@ -543,7 +569,8 @@ label{display:block;font-weight:650;font-size:.87rem;margin-bottom:11px}label sm
 <div class="toolbar"><div><h1><?= esc(orderNumber($id)) ?></h1><p><?= esc($selected['vehicle_type'] . ' · ' . $selected['vehicle']) ?> <?= badge($selected['status'], $statuses) ?></p></div>
 <div class="actions no-print">
 <?php if ($printing): ?><a class="button secondary" href="?pagina=ordens&amp;ver=<?= $id ?>">Voltar</a><button class="button" type="button" id="print-order">Imprimir / salvar PDF</button>
-<?php else: ?><a class="button secondary" href="?pagina=ordens">Ver ordens</a><a class="button secondary" href="?pagina=nova&amp;editar=<?= $id ?>">Editar</a><a class="button secondary" href="?pagina=ordens&amp;ver=<?= $id ?>&amp;imprimir=1">Imprimir / PDF</a><a class="button" href="<?= esc(whatsappUrl($selected, $brand)) ?>" target="_blank" rel="noopener noreferrer">Abrir no WhatsApp</a><?php endif; ?>
+<?php else: ?><a class="button secondary" href="?pagina=ordens">Ver ordens</a><a class="button secondary" href="?pagina=nova&amp;editar=<?= $id ?>">Editar</a><a class="button secondary" href="?pagina=ordens&amp;ver=<?= $id ?>&amp;imprimir=1">Imprimir / PDF</a><a class="button" href="<?= esc(whatsappUrl($selected, $brand)) ?>" target="_blank" rel="noopener noreferrer">Abrir no WhatsApp</a>
+<form method="post"><?= $csrf ?><input type="hidden" name="order_id" value="<?= $id ?>"><input type="hidden" name="send_nonce" value="<?= bin2hex(random_bytes(18)) ?>"><button class="button" name="action" value="send_quote">Enviar orçamento pelo WhatsApp</button></form><?php endif; ?>
 </div></div>
 <section class="card"><div class="card-head"><h2>Dados da ordem</h2></div>
 <div class="facts">
