@@ -242,6 +242,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             session_regenerate_id(true);
             redirect();
         }
+        if ($action === 'save_cash' && ($_GET['pagina'] ?? null) === 'caixa') {
+            require_once __DIR__ . '/caixa.php';
+            saveCash($db, (int) $workshop['id']);
+        }
         if ($action === 'branding') {
             $name = textField('name', 120);
             $upload = $_FILES['logo'] ?? null;
@@ -332,14 +336,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 
 $brand = $workshop['name'] ?? 'R Oficina';
-$pages = ['painel' => 'Visão geral', 'ordens' => 'Ordens de serviço', 'clientes' => 'Clientes', 'veiculos' => 'Veículos', 'identidade' => 'Identidade visual', 'nova' => 'Nova ordem'];
+$pages = ['painel' => 'Visão geral', 'ordens' => 'Ordens de serviço', 'clientes' => 'Clientes', 'veiculos' => 'Veículos', 'caixa' => 'Livro de caixa', 'identidade' => 'Identidade visual', 'nova' => 'Nova ordem'];
 $page = is_string($_GET['pagina'] ?? null) && isset($pages[$_GET['pagina']]) ? $_GET['pagina'] : 'painel';
 $csrf = '<input type="hidden" name="csrf" value="' . esc($_SESSION['csrf']) . '">';
 $orders = $byId = $clients = $vehicles = [];
 $counts = array_fill_keys(array_keys($statuses), 0);
 $today = (new DateTimeImmutable('today', new DateTimeZone('America/Fortaleza')))->format('Y-m-d');
 $overdue = $activeValue = 0;
-if ($workshop && $page !== 'identidade') {
+if ($workshop && !in_array($page, ['identidade', 'caixa'], true)) {
     $stmt = $db->prepare('SELECT * FROM orders WHERE workshop_id = ? ORDER BY id DESC');
     $stmt->execute([$workshop['id']]);
     $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -469,6 +473,10 @@ label{display:block;font-weight:650;font-size:.87rem;margin-bottom:11px}label sm
 </div>
 <?php if ($overdue): ?><p class="notice warning"><?= $overdue ?> <?= $overdue === 1 ? 'ordem com previsão vencida' : 'ordens com previsão vencida' ?>.</p><?php endif; ?>
 <section class="card"><div class="card-head"><h2>Ordens recentes</h2><a href="?pagina=ordens">Ver todas</a></div><?php showOrders(array_slice($orders, 0, 8), $statuses); ?></section>
+<?php elseif ($page === 'caixa'):
+    require_once __DIR__ . '/caixa.php';
+    renderCash($db, (int) $workshop['id'], $csrf);
+?>
 <?php elseif ($page === 'identidade'): ?>
 <div class="toolbar"><div><h1>Identidade visual</h1><p>O nome e a logo aparecem no painel e nos documentos.</p></div></div>
 <section class="card form-card"><form method="post" enctype="multipart/form-data"><?= $csrf ?>
