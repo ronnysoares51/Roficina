@@ -16,6 +16,12 @@ O [AutoKore](https://github.com/nathanfdasilva-prog/autokore/tree/a972a2287c37a0
 
 O [MapOS](https://github.com/RamonSilva20/mapos) é uma opção de base com licença Apache 2.0. Exige adaptação para cadastro de carros e motos e envio de orçamento pela API.
 
-## Estado do projeto
+## Primeira versão publicada
 
-Este repositório contém a descrição inicial do projeto. A aplicação e a publicação na Hostinger ficam para uma etapa posterior.
+Acesse [R Oficina](https://roficina.rstvquix.com/). Cada oficina cadastra sua própria conta e personaliza nome e logo em **Identidade visual**. O painel permite registrar ordens para carros e motos, somar peças e mão de obra e acompanhar a situação do serviço. O botão do orçamento abre uma conversa com a mensagem preenchida para envio pelo WhatsApp.
+
+## Hospedagem
+
+O hPanel publica a branch `main` em `public_html/roficina`. O aplicativo usa PHP 8.1+ com PDO SQLite. Por padrão, o banco fica em `roficina-data` fora de `public_html`. Para outro ambiente, a variável `ROFICINA_DATA_DIR` deve apontar para um diretório gravável e fora da raiz pública.
+
+O envio automático pelo provedor de WhatsApp continua pendente.
