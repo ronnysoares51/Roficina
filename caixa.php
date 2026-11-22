@@ -58,6 +58,12 @@ function cashQuery(string $start, string $end, array $extra = []): string {
     return '?' . http_build_query(['pagina' => 'caixa', 'inicio' => $start, 'fim' => $end] + $extra);
 }
 
+function insertCashEntry(PDO $db, array $values): int {
+    $stmt = $db->prepare('INSERT INTO cash_entries (entry_date, kind, description, category, payment, amount_cents, workshop_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $stmt->execute($values);
+    return (int) $db->lastInsertId();
+}
+
 function saveCash(PDO $db, int $workshopId): never {
     $date = field('entry_date');
     $kind = field('kind');
@@ -86,8 +92,7 @@ function saveCash(PDO $db, int $workshopId): never {
         }
         $_SESSION['flash'] = 'Lançamento atualizado.';
     } else {
-        $stmt = $db->prepare('INSERT INTO cash_entries (entry_date, kind, description, category, payment, amount_cents, workshop_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
-        $stmt->execute($values);
+        insertCashEntry($db, $values);
         $_SESSION['flash'] = 'Lançamento registrado.';
     }
 
