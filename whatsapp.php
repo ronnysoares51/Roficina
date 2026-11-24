@@ -258,6 +258,20 @@ function whatsappSender(array $key): ?string {
     return $matches[1];
 }
 
+// O WhatsApp identifica muitos celulares brasileiros sem o nono dígito
+// (558599999999 em vez de 5585999999999). Remove esse dígito para comparar.
+function whatsappComparableNumber(string $number): string {
+    return strlen($number) === 13 && $number[4] === '9' ? substr($number, 0, 4) . substr($number, 5) : $number;
+}
+
+function whatsappAllowedSender(string $sender, array $allowed): bool {
+    $sender = whatsappComparableNumber($sender);
+    foreach ($allowed as $number) {
+        if (is_string($number) && whatsappComparableNumber($number) === $sender) return true;
+    }
+    return false;
+}
+
 function whatsappRespond(int $status): never {
     http_response_code($status);
     header('Content-Type: application/json; charset=UTF-8');
@@ -275,8 +289,9 @@ function receiveWhatsApp(PDO $db): never {
         $stmt->execute([$token]);
         $settings = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$settings) whatsappRespond(404);
-        $raw = file_get_contents('php://input', false, null, 65537);
-        if ($raw === false || strlen($raw) > 65536) whatsappRespond(413);
+        $raw = file_get_contents('php://input', false, null, 0, 65537);
+        if ($raw === false) whatsappRespond(400);
+        if (strlen($raw) > 65536) whatsappRespond(413);
         $payload = json_decode($raw, true);
         if (!is_array($payload)) whatsappRespond(400);
         if (!in_array($payload['event'] ?? '', ['messages.upsert', 'MESSAGES_UPSERT'], true)
@@ -289,7 +304,7 @@ function receiveWhatsApp(PDO $db): never {
         if (is_numeric($timestamp) && (int) $timestamp < time() - 3600) whatsappRespond(200);
         $sender = whatsappSender($key);
         $allowed = json_decode($settings['allowed_phones'], true, 512, JSON_THROW_ON_ERROR);
-        if (!$sender || !in_array($sender, $allowed, true)) whatsappRespond(200);
+        if (!$sender || !is_array($allowed) || !whatsappAllowedSender($sender, $allowed)) whatsappRespond(200);
         $message = $data['message']['conversation'] ?? $data['message']['extendedTextMessage']['text'] ?? null;
         $messageId = $key['id'] ?? null;
         if (!is_string($message) || !is_string($messageId) || $messageId === '' || strlen($messageId) > 150) whatsappRespond(200);
